@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Запись на прием</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .time-slot {
+            display: inline-block;
+            margin: 5px;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .time-slot:hover {
+            background-color: #f0f0f0;
+        }
+        .time-slot.selected {
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .time-slot.taken {
+            background-color: #e9ecef;
+            color: #6c757d;
+            cursor: not-allowed;
+        }
+        .error {
+            color: red;
+            font-size: 0.9em;
+        }
+        .phone-mask {
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8 col-lg-6">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h3 class="card-title mb-0">Запись на прием</h3>
+                    </div>
+                    <div class="card-body">
+                        {% if errors %}
+                            <div class="alert alert-danger">
+                                <ul class="mb-0">
+                                    {% for error in errors %}
+                                        <li>{{ error }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        {% endif %}
+
+                        <form id="appointmentForm" method="POST">
+                            <div class="mb-3">
+                                <label for="date" class="form-label">Дата приема</label>
+                                <input type="date" class="form-control" id="date" name="date"
+                                       min="2025-06-15" max="2025-08-15" required
+                                       value="{{ form_data.date if form_data }}">
+                                <div class="form-text">Выберите дату между 15 июня и 15 августа 2025 года</div>
+                            </div>
+
+                            <div class="mb-3" id="timeSelection" style="display: none;">
+                                <label class="form-label">Время приема</label>
+                                <div id="timeSlots" class="d-flex flex-wrap"></div>
+                                <input type="hidden" id="time" name="time" required>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="full_name" class="form-label">Фамилия Имя Отчество</label>
+                                <input type="text" class="form-control" id="full_name" name="full_name"
+                                       pattern="[а-яА-ЯёЁa-zA-Z\s\-]+" required
+                                       value="{{ form_data.full_name if form_data and form_data.full_name }}">
+                                <div class="error" id="nameError"></div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="phone" class="form-label">Номер телефона</label>
+                                <input type="tel" class="form-control phone-mask" id="phone" name="phone"
+                                       placeholder="+7 (___) ___-__-__" required
+                                       value="{{ form_data.phone if form_data and form_data.phone }}">
+                                <div class="error" id="phoneError"></div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100">Записаться</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Форматирование телефона
+        document.getElementById('phone').addEventListener('input', function(e) {
+            let x = e.target.value.replace(/\D/g, '').match(/(\d{0,1})(\d{0,3})(\d{0,3})(\d{0,2})(\d{0,2})/);
+            e.target.value = !x[1] ? '' : `+7 (${x[2] ? x[2] : ''}${x[3] ? ') ' + x[3] : ''}${x[4] ? '-' + x[4] : ''}${x[5] ? '-' + x[5] : ''}`;
+        });
+
+        // Загрузка доступных временных слотов при выборе даты
+        document.getElementById('date').addEventListener('change', function() {
+            const date = this.value;
+            const timeSelection = document.getElementById('timeSelection');
+            const timeSlots = document.getElementById('timeSlots');
+            const timeInput = document.getElementById('time');
+
+            if (!date) {
+                timeSelection.style.display = 'none';
+                timeInput.value = '';
+                return;
+            }
+
+            // Показываем загрузку
+            timeSlots.innerHTML = '<p>Загрузка доступных временных слотов...</p>';
+            timeSelection.style.display = 'block';
+
+            // Запрашиваем занятые времена
+            fetch(`/api/taken_times?date=${date}`)
+                .then(response => response.json())
+                .then(data => {
+                    timeSlots.innerHTML = '';
+
+                    if (data.error) {
+                        timeSlots.innerHTML = `<p class="text-danger">${data.error}</p>`;
+                        return;
+                    }
+
+                    const takenTimes = data.taken_times || [];
+                    const startHour = 8;
+                    const endHour = 16;
+
+                    // Генерируем временные слоты с шагом 30 минут
+                    for (let hour = startHour; hour < endHour; hour++) {
+                        for (let minute = 0; minute < 60; minute += 30) {
+                            const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                            const isTaken = takenTimes.includes(timeStr);
+
+                            const slot = document.createElement('div');
+                            slot.className = `time-slot ${isTaken ? 'taken' : ''}`;
+                            slot.textContent = timeStr;
+                            slot.dataset.time = timeStr;
+
+                            if (!isTaken) {
+                                slot.addEventListener('click', function() {
+                                    document.querySelectorAll('.time-slot').forEach(s => {
+                                        s.classList.remove('selected');
+                                    });
+                                    this.classList.add('selected');
+                                    timeInput.value = this.dataset.time;
+                                });
+                            }
+
+                            timeSlots.appendChild(slot);
+                        }
+                    }
+                })
+                .catch(error => {
+                    timeSlots.innerHTML = `<p class="text-danger">Ошибка загрузки временных слотов</p>`;
+                    console.error('Error:', error);
+                });
+        });
+
+        // Валидация имени в реальном времени
+        document.getElementById('full_name').addEventListener('input', function() {
+            const errorElement = document.getElementById('nameError');
+            if (!/^[а-яА-ЯёЁa-zA-Z\s\-]+$/.test(this.value)) {
+                errorElement.textContent = 'ФИО должно содержать только буквы, пробелы и дефисы';
+            } else {
+                errorElement.textContent = '';
+            }
+        });
+    </script>
+</body>
+</html>
